@@ -10,4 +10,4 @@ export const THEMES = [
   'light',
 ] as const;
 
-export const DEFAULT_THEME = 'dark';
+export const DEFAULT_THEME = 'light';
