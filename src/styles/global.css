@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* Make Tailwind Typography (`prose`) follow the active daisyUI theme instead
+   of its own hardcoded palette, so article content re-themes automatically. */
+.prose {
+  --tw-prose-body: hsl(var(--bc) / 0.8);
+  --tw-prose-headings: hsl(var(--bc));
+  --tw-prose-lead: hsl(var(--bc) / 0.8);
+  --tw-prose-links: hsl(var(--p));
+  --tw-prose-bold: hsl(var(--bc));
+  --tw-prose-counters: hsl(var(--bc) / 0.6);
+  --tw-prose-bullets: hsl(var(--bc) / 0.4);
+  --tw-prose-hr: hsl(var(--bc) / 0.2);
+  --tw-prose-quotes: hsl(var(--bc));
+  --tw-prose-quote-borders: hsl(var(--bc) / 0.2);
+  --tw-prose-captions: hsl(var(--bc) / 0.6);
+  --tw-prose-code: hsl(var(--bc));
+  --tw-prose-pre-code: hsl(var(--bc));
+  --tw-prose-pre-bg: hsl(var(--b2));
+  --tw-prose-th-borders: hsl(var(--bc) / 0.3);
+  --tw-prose-td-borders: hsl(var(--bc) / 0.2);
+}

@@ -1,0 +1,35 @@
+---
+import { THEMES } from '../data/themes';
+---
+
+<div class="dropdown dropdown-end">
+  <div tabindex="0" role="button" class="btn btn-sm btn-ghost">
+    Theme
+    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 fill-current opacity-70" viewBox="0 0 24 24">
+      <path d="M12 15.5 4.5 8h15z" />
+    </svg>
+  </div>
+  <ul tabindex="0" class="dropdown-content z-10 menu p-2 shadow bg-base-200 rounded-box w-40">
+    {THEMES.map((theme) => (
+      <li>
+        <button type="button" data-theme-choice={theme} class="justify-between capitalize">
+          {theme}
+        </button>
+      </li>
+    ))}
+  </ul>
+</div>
+
+<script>
+  const STORAGE_KEY = 'theme';
+
+  document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const theme = btn.dataset.themeChoice!;
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem(STORAGE_KEY, theme);
+      // Close the dropdown by blurring the active element.
+      (document.activeElement as HTMLElement | null)?.blur();
+    });
+  });
+</script>

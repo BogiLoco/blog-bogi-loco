@@ -1,0 +1,46 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { site } from '../data/site';
+
+const background =
+  "I am usually busy bringing automation to the next level, building quality not a product and cooking up new skills, collecting them like a chef collects spices, whatever the recipe calls for. The blog is part of this recipe and the main purpose here is adventure which let me crawl, walk, run... eventually fly.";
+---
+
+<BaseLayout title="About Me" description={`About ${site.name}`}>
+  <section class="py-10 max-w-2xl mx-auto">
+    <div class="flex flex-col items-center text-center gap-3 mb-10">
+      <div class="avatar">
+        <div class="w-24 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
+          <img src={site.avatar} alt={site.name} />
+        </div>
+      </div>
+      <h1 class="text-3xl font-bold">{site.name}</h1>
+      {site.affiliation && <p class="opacity-70">{site.affiliation}</p>}
+    </div>
+
+    <div class="prose max-w-none">
+      <h2>Bio</h2>
+      <blockquote class="italic border-l-4 border-base-content/20 pl-4">
+        <p>{site.bio}</p>
+        <cite class="block italic text-sm opacity-60 mt-1">— {site.bioSource}</cite>
+      </blockquote>
+    </div>
+
+    <div class="mt-10">
+      <h2 class="text-xl font-bold mb-4">Background</h2>
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <p class="indent-8 leading-relaxed">{background}</p>
+        </div>
+      </div>
+    </div>
+
+    {/* Contact — hidden for now. Uncomment to bring it back.
+    <div class="mt-10">
+      <h2 class="text-xl font-bold mb-4">Contact</h2>
+      <a href={site.email} class="btn btn-sm btn-outline">Email</a>
+      <p class="text-sm opacity-60 mt-2">GitHub, LinkedIn, and X links are in the footer.</p>
+    </div>
+    */}
+  </section>
+</BaseLayout>

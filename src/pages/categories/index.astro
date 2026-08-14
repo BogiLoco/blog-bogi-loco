@@ -1,0 +1,21 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { CATEGORIES } from '../../data/categories';
+---
+
+<BaseLayout title="Categories" description="Browse posts by category.">
+  <section class="py-10">
+    <h1 class="text-3xl font-bold mb-2">Categories</h1>
+    <p class="opacity-70 mb-6">Browse posts by topic.</p>
+    <div class="grid gap-4 sm:grid-cols-2">
+      {CATEGORIES.map((c) => (
+        <a href={`/categories/${c.key}`} class="card bg-base-200 hover:bg-base-300 transition-colors">
+          <div class="card-body p-4">
+            <h2 class="card-title text-base">{c.label}</h2>
+            <p class="text-sm opacity-70">{c.description}</p>
+          </div>
+        </a>
+      ))}
+    </div>
+  </section>
+</BaseLayout>

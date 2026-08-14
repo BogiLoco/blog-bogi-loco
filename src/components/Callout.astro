@@ -1,0 +1,18 @@
+---
+interface Props {
+  type?: 'note' | 'warning' | 'danger' | 'tip';
+}
+
+const { type = 'note' } = Astro.props;
+
+const styles: Record<string, string> = {
+  note: 'border-blue-400/40 bg-blue-400/5',
+  warning: 'border-yellow-400/40 bg-yellow-400/5',
+  danger: 'border-red-400/40 bg-red-400/5',
+  tip: 'border-emerald-400/40 bg-emerald-400/5',
+};
+---
+
+<div class={`border rounded px-4 py-3 my-4 text-sm not-prose ${styles[type]}`}>
+  <slot />
+</div>

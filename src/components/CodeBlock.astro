@@ -1,0 +1,15 @@
+---
+interface Props {
+  lang?: string;
+  filename?: string;
+}
+
+const { lang = 'text', filename } = Astro.props;
+---
+
+<div class="rounded overflow-hidden border border-base-content/10 my-4 not-prose">
+  {filename && (
+    <div class="text-xs px-3 py-1 bg-base-content/5 opacity-70 font-mono">{filename}</div>
+  )}
+  <pre class={`language-${lang} p-3 overflow-x-auto text-sm bg-base-200`}><code><slot /></code></pre>
+</div>

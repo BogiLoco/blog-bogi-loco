@@ -1,0 +1,22 @@
+---
+// Placeholder newsletter signup. Wire up to your provider of choice
+// (Buttondown, ConvertKit, etc.) — GitHub Pages is static-only, so this
+// needs to POST to an external form endpoint, not a local API route.
+---
+
+<div class="border border-white/10 rounded p-4 my-8 text-sm">
+  <p class="font-medium">Get new posts by email</p>
+  <p class="opacity-70 mt-1">No spam, unsubscribe anytime.</p>
+  <form action="https://REPLACE_WITH_YOUR_FORM_ENDPOINT" method="post" class="mt-3 flex gap-2">
+    <input
+      type="email"
+      name="email"
+      required
+      placeholder="you@example.com"
+      class="flex-1 px-3 py-2 rounded bg-white/5 border border-white/15 text-sm"
+    />
+    <button type="submit" class="px-3 py-2 rounded bg-white/10 border border-white/20 text-sm">
+      Subscribe
+    </button>
+  </form>
+</div>

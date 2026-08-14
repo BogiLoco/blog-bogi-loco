@@ -1,0 +1,54 @@
+---
+import BaseLayout from './BaseLayout.astro';
+
+interface Source {
+  title: string;
+  url: string;
+}
+
+interface Props {
+  title: string;
+  description: string;
+  publishDate: Date;
+  updatedDate?: Date;
+  category: string;
+  sources: Source[];
+  containsPoc?: boolean;
+}
+
+const { title, description, publishDate, updatedDate, category, sources, containsPoc } =
+  Astro.props;
+---
+
+<BaseLayout title={title} description={description}>
+  <article class="prose max-w-none py-8 mx-auto lg:max-w-3xl">
+    <p class="text-xs uppercase tracking-wide opacity-60">{category}</p>
+    <h1>{title}</h1>
+    <p class="text-sm opacity-60">
+      {publishDate.toDateString()}
+      {updatedDate && <> — updated {updatedDate.toDateString()}</>}
+    </p>
+
+    {containsPoc && (
+      <div role="alert" class="alert alert-warning not-prose text-sm">
+        <span>
+          This post includes proof-of-concept material. Educational purposes only — do not use
+          against systems you don't own or have explicit permission to test.
+        </span>
+      </div>
+    )}
+
+    <slot />
+
+    {sources.length > 0 && (
+      <section>
+        <h2>Sources</h2>
+        <ul>
+          {sources.map((s) => (
+            <li><a href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a></li>
+          ))}
+        </ul>
+      </section>
+    )}
+  </article>
+</BaseLayout>

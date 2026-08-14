@@ -1,0 +1,74 @@
+---
+import '../styles/global.css';
+import ThemePicker from '../components/ThemePicker.astro';
+import Logo from '../components/Logo.astro';
+import SocialIcons from '../components/SocialIcons.astro';
+import { site } from '../data/site';
+import { DEFAULT_THEME } from '../data/themes';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = site.tagline } = Astro.props;
+
+// Categories nav entry hidden for now (not enough posts yet) — the
+// /categories pages still exist, just unlinked. Re-add here when ready:
+// { href: '/categories', label: 'Categories' },
+const navLinks = [
+  { href: '/', label: 'Home' },
+  { href: '/articles', label: 'Articles' },
+  { href: '/about', label: 'About Me' },
+];
+---
+
+<!doctype html>
+<html lang="en" data-theme={DEFAULT_THEME}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href="/images/logo-b.jpg" type="image/jpeg" />
+    <script is:inline define:vars={{ DEFAULT_THEME }}>
+      // Apply the saved theme before first paint to avoid a flash of the default theme.
+      try {
+        const saved = localStorage.getItem('theme');
+        if (saved) document.documentElement.setAttribute('data-theme', saved);
+        else document.documentElement.setAttribute('data-theme', DEFAULT_THEME);
+      } catch {
+        // localStorage unavailable (e.g. private browsing) — default theme already applied.
+      }
+    </script>
+  </head>
+  <body class="min-h-screen flex flex-col bg-base-100 text-base-content">
+    <header class="navbar max-w-5xl mx-auto px-4">
+      <div class="navbar-start">
+        <a href="/" aria-label={site.title} class="inline-flex items-center">
+          <Logo class="h-9 w-9" />
+        </a>
+      </div>
+      <nav class="navbar-center hidden md:flex gap-1 text-sm">
+        {navLinks.map((link) => (
+          <a href={link.href} class="btn btn-sm btn-ghost">{link.label}</a>
+        ))}
+      </nav>
+      <div class="navbar-end">
+        <ThemePicker />
+      </div>
+    </header>
+    <nav class="md:hidden flex flex-wrap gap-2 max-w-5xl mx-auto px-4 pb-4 text-sm">
+      {navLinks.map((link) => (
+        <a href={link.href} class="btn btn-xs btn-ghost">{link.label}</a>
+      ))}
+    </nav>
+    <main class="max-w-5xl mx-auto px-4 w-full flex-1">
+      <slot />
+    </main>
+    <footer class="max-w-5xl mx-auto px-4 py-10 w-full flex items-center justify-between gap-4">
+      <p class="text-sm opacity-60">&copy; {new Date().getFullYear()} BogiLoco</p>
+      <SocialIcons />
+    </footer>
+  </body>
+</html>

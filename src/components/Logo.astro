@@ -1,0 +1,13 @@
+---
+interface Props {
+  class?: string;
+}
+
+const { class: className = 'h-10 w-10' } = Astro.props;
+---
+
+<img
+  src="/images/logo-b.jpg"
+  alt="Site logo"
+  class={`${className} rounded bg-white p-0.5 object-contain`}
+/>

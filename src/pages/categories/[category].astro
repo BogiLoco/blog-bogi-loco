@@ -1,0 +1,33 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PostCard from '../../components/PostCard.astro';
+import { sortPosts } from '../../utils/sortPosts';
+import { CATEGORIES } from '../../data/categories';
+
+export async function getStaticPaths() {
+  return Promise.all(
+    CATEGORIES.map(async (c) => ({
+      params: { category: c.key },
+      props: { posts: sortPosts(await getCollection(c.key)), meta: c },
+    }))
+  );
+}
+
+const { posts, meta } = Astro.props;
+---
+
+<BaseLayout title={meta.label} description={meta.description}>
+  <section class="py-10">
+    <p class="text-sm opacity-60"><a href="/categories" class="link link-hover">Categories</a> / {meta.label}</p>
+    <h1 class="text-3xl font-bold mt-1 mb-2">{meta.label}</h1>
+    <p class="opacity-70 mb-6">{meta.description}</p>
+    {posts.length > 0 ? (
+      <div class="grid gap-4">
+        {posts.map((post) => <PostCard post={post} />)}
+      </div>
+    ) : (
+      <p class="opacity-60 text-sm">No posts in this category yet.</p>
+    )}
+  </section>
+</BaseLayout>

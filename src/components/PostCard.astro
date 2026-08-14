@@ -1,0 +1,20 @@
+---
+import { CATEGORIES } from '../data/categories';
+
+interface Props {
+  post: any;
+}
+
+const { post } = Astro.props;
+const { title, description, publishDate, category } = post.data;
+const categoryLabel = CATEGORIES.find((c) => c.key === category)?.label ?? category;
+---
+
+<a href={`/articles/${post.slug}`} class="card bg-base-200 hover:bg-base-300 transition-colors">
+  <div class="card-body p-4">
+    <span class="badge badge-outline badge-sm w-fit">{categoryLabel}</span>
+    <h3 class="card-title text-lg mt-1">{title}</h3>
+    <p class="text-sm opacity-70">{description}</p>
+    <p class="text-xs opacity-50 mt-2">{new Date(publishDate).toDateString()}</p>
+  </div>
+</a>

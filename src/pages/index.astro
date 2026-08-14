@@ -1,0 +1,63 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PostCard from '../components/PostCard.astro';
+import { sortPosts } from '../utils/sortPosts';
+import { site } from '../data/site';
+import { CATEGORIES } from '../data/categories';
+
+const allCategoryPosts = (
+  await Promise.all(CATEGORIES.map((c) => getCollection(c.key)))
+).flat();
+
+const publishedPosts = sortPosts(allCategoryPosts);
+const recentPosts = publishedPosts.slice(0, 3);
+---
+
+<BaseLayout title={site.title} description={site.tagline}>
+  <!-- Profile -->
+  <section class="flex flex-col items-center text-center gap-3 py-12">
+    <div class="avatar">
+      <div class="w-28 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
+        <img src={site.avatar} alt={site.name} />
+      </div>
+    </div>
+    <h1 class="text-3xl font-bold">Welcome! I'm {site.name}</h1>
+    {site.affiliation && <p class="opacity-70">{site.affiliation}</p>}
+    <p class="opacity-80 max-w-xl">{site.tagline}</p>
+  </section>
+
+  {/* Category grid — hidden for now (not enough posts yet). Uncomment to bring it back.
+  <section class="py-10">
+    <div class="flex items-baseline justify-between mb-4">
+      <h2 class="text-2xl font-bold">What I write about</h2>
+      <a href="/categories" class="link link-hover text-sm">All categories →</a>
+    </div>
+    <div class="grid gap-4 sm:grid-cols-2">
+      {CATEGORIES.map((c) => (
+        <a href={`/categories/${c.key}`} class="card bg-base-200 hover:bg-base-300 transition-colors">
+          <div class="card-body p-4">
+            <h3 class="card-title text-base">{c.label}</h3>
+            <p class="text-sm opacity-70">{c.description}</p>
+          </div>
+        </a>
+      ))}
+    </div>
+  </section>
+  */}
+
+  <!-- Recent articles -->
+  <section class="pb-16">
+    <div class="flex items-baseline justify-between mb-4">
+      <h2 class="text-2xl font-bold">Recent articles</h2>
+      <a href="/articles" class="link link-hover text-sm">All articles →</a>
+    </div>
+    {recentPosts.length > 0 ? (
+      <div class="grid gap-4">
+        {recentPosts.map((post) => <PostCard post={post} />)}
+      </div>
+    ) : (
+      <p class="opacity-60 text-sm">No articles published yet — check back soon.</p>
+    )}
+  </section>
+</BaseLayout>
