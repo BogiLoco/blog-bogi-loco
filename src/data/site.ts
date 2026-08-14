@@ -1,7 +1,7 @@
 // Central site/profile config — edit this file to set your own name, bio, and links.
 // Referenced by the homepage profile section and the site header.
 export const site = {
-  title: 'Blog',
+  title: 'BogiLoco — An awesome AI adventure',
   name: 'BogiLoco',
   affiliation: '', // e.g. "Security Engineer" or "Independent Researcher" — leave blank to omit
   tagline: "Being here means that you have officially signed up for a new AI adventure. Let's move on 💪",
