@@ -1,5 +1,6 @@
 ---
 import BaseLayout from './BaseLayout.astro';
+import Callout from '../components/Callout.astro';
 
 interface Source {
   title: string;
@@ -30,12 +31,10 @@ const { title, description, publishDate, updatedDate, category, sources, contain
     </p>
 
     {containsPoc && (
-      <div role="alert" class="alert alert-warning not-prose text-sm">
-        <span>
-          This post includes proof-of-concept material. Educational purposes only — do not use
-          against systems you don't own or have explicit permission to test.
-        </span>
-      </div>
+      <Callout type="warning">
+        This post includes proof-of-concept material for educational purposes. Only run it
+        against systems you own or have explicit permission to test.
+      </Callout>
     )}
 
     <slot />

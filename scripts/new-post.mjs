@@ -88,11 +88,11 @@ sources: []
 containsPoc: false
 ---
 
-## Hook
+<!-- Hook: grab attention in 2-3 sentences, no heading — flows straight after the frontmatter. -->
 
-## Context
+<!-- Context: background before the specifics, no heading. -->
 
-## Core content
+<!-- Core content: the actual how/what. Use ### subheadings as needed, no top-level heading. -->
 
 ## Practical takeaways
 
