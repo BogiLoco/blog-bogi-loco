@@ -26,3 +26,7 @@ body {
   --tw-prose-th-borders: hsl(var(--bc) / 0.3);
   --tw-prose-td-borders: hsl(var(--bc) / 0.2);
 }
+
+.prose p {
+  text-indent: 3ch;
+}

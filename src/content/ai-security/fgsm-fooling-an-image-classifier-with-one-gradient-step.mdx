@@ -1,0 +1,113 @@
+---
+title: "FGSM: Story of how I tricked a neural net with one gradient step"
+description: "What the Fast Gradient Sign Method is, how it works, and how to run it yourself against a real ImageNet classifier, with code."
+publishDate: 2026-08-15
+draft: false
+tags: ["red-teaming", "benchmarking"]
+category: "ai-security"
+sources:
+  - title: "Goodfellow, Shlens, Szegedy: Explaining and Harnessing Adversarial Examples (arXiv:1412.6572)"
+    url: "https://arxiv.org/abs/1412.6572"
+containsPoc: true
+---
+
+import Callout from '../../components/Callout.astro';
+
+Same dog. Same photo, almost pixel for pixel. And the model just goes: "yeah, actually it's a cat, 80% sure." Seriously.
+
+Here's exactly what happened. I took the sample dog photo this repo's demo ships with, fed it to a pretrained ResNet18. It said "Samoyed," 83.72% confidence, no argument. Then I added a perturbation so small you can't see it with your eyes: one gradient computation, no retraining, no extra data, no access to anything but the model's gradient. Fed it in again: "Siamese cat," 80.15% confidence.
+
+This isn't some bug in my code. It's not a fluke. It's a fundamental property of how these networks work in the first place. There's a name for this: FGSM, Fast Gradient Sign Method. Goodfellow, Shlens, and Szegedy published the paper in 2014, and the core claim was almost rude in its simplicity: neural networks aren't fooled because they're "too nonlinear and complex," they're fooled because they're *too linear*. A model that behaves close to linearly in high-dimensional input space will accumulate a lot of change in its output from many tiny, coordinated changes in its input, even if each individual pixel moves by less than what a human eye can register.
+
+If you've done any red-teaming against LLMs, the shape of this should feel familiar: you're not looking for a big, obvious flaw, you're looking for a small, structured nudge that the model's decision boundary is sensitive to. FGSM is that idea applied to image classifiers, and it's the baseline every other adversarial-robustness technique gets compared against.
+
+This is a **white-box** attack: you need gradient access to the model. That's a real constraint, since you can't FGSM a model behind an API you can only query. But it's also exactly why it matters for testing: if you own the model or you're evaluating one before shipping it, white-box access is what you *have*, and FGSM is the cheapest possible check of "does this thing fold under a single coordinated push."
+
+### The idea, without the paper's notation
+
+You want to find a perturbation `η` (eta) that increases the model's loss with respect to the true label, subject to a budget: no pixel is allowed to move by more than `ε` (epsilon). This is an `L∞` constraint, not an `L2` one, because it's modeling "how much can any single pixel change," not "how much total energy is in the perturbation."
+
+Under a linear approximation, the perturbation that maximizes loss increase for a given `L∞` budget is:
+
+```
+η = ε · sign(∇ₓ loss(model(x), true_label))
+```
+
+Take the gradient of the loss with respect to the *input pixels* (not the weights, since you're not training anything), keep only its sign (+1, -1, or 0 per pixel), scale by epsilon, add it to the image, clamp back to a valid pixel range. One step. That's the whole attack.
+
+### What this looks like in code
+
+Here's the untargeted version, trimmed to the actual attack step (full file linked below):
+
+```python
+def fgsm_untargeted(x_01, true_label, epsilon):
+    x_01 = x_01.clone().detach().to(DEVICE)
+    x_01.requires_grad_(True)          # gradient w.r.t. PIXELS, not weights
+
+    x_norm = normalize(x_01)
+    logits = model(x_norm.unsqueeze(0))
+    loss = F.cross_entropy(logits, torch.tensor([true_label]).to(DEVICE))
+
+    model.zero_grad()
+    loss.backward()
+
+    with torch.no_grad():
+        x_adv = x_01 + epsilon * x_01.grad.sign()
+        x_adv = torch.clamp(x_adv, 0, 1)
+
+    return x_adv.cpu()
+```
+
+Two details worth calling out because they're the parts people get wrong on a first implementation:
+
+- `x_01.requires_grad_(True)` is set on the **image**, not on any model parameter. `param.requires_grad = False` is set for every model weight elsewhere in the script, since you're explicitly not training here, you're differentiating the loss with respect to the input.
+- The attack operates in `[0, 1]` unnormalized pixel space, and `normalize()` is a separate step applied only right before the forward pass. That's deliberate: epsilon needs to mean "this many units of raw pixel intensity" for the `L∞` budget to be physically meaningful. If you computed the gradient sign in normalized space instead, epsilon would mean something different per channel (because mean/std differ per channel), and your perturbation budget would stop being an honest `L∞` ball.
+
+### Running it
+
+```bash
+git clone https://github.com/BogiLoco/FGSM
+cd FGSM
+python3 -m venv venv && source venv/bin/activate
+pip install torch torchvision matplotlib pillow requests
+python fgsm.py
+```
+
+No training, no dataset download: it pulls a pretrained ResNet18 (ImageNet-1K weights) from `torchvision` and a sample image on first run. It runs an untargeted attack, then an **epsilon sweep**: the same attack repeated at increasing budgets, so you can see the exact point where the model's prediction flips.
+
+<Callout type="note">
+Everything here runs against a `resnet18` instance in your own process, on an image you pass in. There's no target system to reach, no API to hit. That's also its limit: this technique needs white-box gradient access, so it says nothing about how a black-box, API-fronted model would hold up.
+</Callout>
+
+A single untargeted step at `eps=8/255` does this: original, the perturbation itself (amplified so you can actually see it), and the result.
+
+![Side-by-side: a Samoyed classified correctly at 83.72%, the FGSM perturbation visually amplified, and the same image after the attack, classified as Siamese cat at 80.15%](/images/fgsm-comparison.jpg)
+
+The middle panel is the entire attack: `epsilon * sign(gradient)`, visualized. It looks like structured noise because it *is*: every pixel moved by the maximum amount the sign of the gradient allowed, which is why it's uniformly speckled rather than concentrated on any one visually meaningful region.
+
+Here's the full epsilon sweep for the same image:
+
+```
+   epsilon | prediction                | confidence
+----------------------------------------------------
+    0.0000 | Samoyed                   |    83.72%
+    0.0039 | white wolf                |    40.42%  <- attack successful!
+    0.0078 | lynx                      |    20.05%  <- attack successful!
+    0.0157 | Siamese cat               |    39.27%  <- attack successful!
+    0.0314 | Siamese cat               |    80.15%  <- attack successful!
+    0.0627 | Siamese cat               |    90.37%  <- attack successful!
+    0.1255 | West Highland white terrier |    41.27%  <- attack successful!
+```
+
+Notice the confidence doesn't monotonically fall as epsilon grows. It dips hard around `eps=0.0078` (down to 20%, a genuinely uncertain model), then *recovers* to 90% by `eps=0.0627`, just now confidently wrong about "Siamese cat" instead of confidently right about "Samoyed." Low confidence turns out to be a transient state on the way to a new, equally confident, wrong answer, not a stable "I don't know." That's the property that makes adversarial robustness a real testing problem and not just a calibration problem.
+
+The repo also ships a **targeted** variant, `fgsm_targeted()`: same attack, one change. Instead of *maximizing* the loss against the true label, it *minimizes* the loss against a label you choose, and steps against the gradient instead of with it. It's a one-line diff from the untargeted version. Worth trying yourself, since aiming at a specific class turns out to be a meaningfully harder problem than "anything but the truth" for a single linear step. Code and both variants: [github.com/BogiLoco/FGSM](https://github.com/BogiLoco/FGSM).
+
+## Before you go
+
+- **FGSM is a smoke test, not a robustness certification.** A single linear step is often enough to push a model off its correct answer, as the run above shows, but pushing it toward one *specific* wrong answer is a meaningfully harder problem for a single step to solve. That's exactly the gap PGD closes by iterating and re-aiming after every step. If "not FGSM-attackable" is part of a security claim, treat it as a floor, not a ceiling: it means nothing folded to the cheapest attack, not that nothing folds to a real one.
+- **`ε = 8/255` is the de facto standard budget** for ImageNet-scale `L∞` evals in the literature: small enough to be visually imperceptible on natural images, large enough that most undefended models fail. Use it as your default when you don't have a task-specific reason to pick something else, and always report which epsilon you tested at. "Robust to FGSM" without an epsilon is a meaningless claim.
+- **This only applies to white-box, differentiable models.** No gradient access (a model hidden behind an inference API) means no FGSM; you'd need a transfer attack (craft on a substitute model, hope it transfers) or a black-box/query-based method instead. Don't reach for FGSM when what you actually have is API access.
+- **Targeted FGSM (`fgsm_targeted()` in the repo) is a harder ask than untargeted.** It's the same one-step math with the sign flipped and the loss minimized against a chosen label instead of maximized against the true one, but steering a model toward one *specific* wrong class in a single linear step is much less reliable than just pushing it off the correct one. If your threat model cares about an attacker aiming at a particular outcome (not just "cause any misclassification"), test with the targeted variant specifically. An untargeted-only robustness check will miss this failure mode, and if it doesn't land at a reasonable epsilon, that's a sign to reach for PGD rather than concluding the model is safe from targeted attacks.
+- **A confidence dip isn't a permanent state.** Don't read it as "the model is being appropriately cautious." In the sweep above, confidence bottoms out at 20% mid-attack and then climbs back to 90%, just now attached to the wrong class. A monitor that only alerts on low confidence would fire briefly, then go quiet right as the model settles into being confidently wrong.
+- **The full runnable code, including the targeted variant and the epsilon sweep implementation, is at [github.com/BogiLoco/FGSM](https://github.com/BogiLoco/FGSM)** (MIT licensed; README covers setup and how to point it at your own image).
