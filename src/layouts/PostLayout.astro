@@ -23,11 +23,11 @@ const { title, description, publishDate, updatedDate, category, sources, contain
 
 <BaseLayout title={title} description={description}>
   <article class="prose max-w-none py-8 mx-auto lg:max-w-3xl">
-    <p class="text-xs uppercase tracking-wide opacity-60">{category}</p>
+    <p class="text-xs uppercase tracking-wide opacity-60">{category.replace('-', ' ')}</p>
     <h1>{title}</h1>
     <p class="text-sm opacity-60">
       {publishDate.toDateString()}
-      {updatedDate && <> — updated {updatedDate.toDateString()}</>}
+      {updatedDate && <> (updated {updatedDate.toDateString()})</>}
     </p>
 
     {containsPoc && (

@@ -1,0 +1,138 @@
+---
+title: "PGD: Same Attack, Way More Persistent"
+description: "How Projected Gradient Descent iterates past FGSM's single-step limits, with real captured results including a targeted attack that actually lands."
+publishDate: 2026-08-19
+draft: false
+tags: ["red-teaming", "benchmarking"]
+category: "ai-security"
+sources:
+  - title: "Madry, Makelov, Schmidt, Tsipras, Vladu: Towards Deep Learning Models Resistant to Adversarial Attacks (arXiv:1706.06083)"
+    url: "https://arxiv.org/abs/1706.06083"
+containsPoc: true
+---
+
+import Callout from '../../components/Callout.astro';
+
+Last time, I threw the cheapest attack possible at a ResNet18. One gradient step, sign function, done. It flipped the prediction fine, but aimed at a specific target class, it whiffed completely. Never landed, not even at a perturbation big enough to see. This time, same model, same target, same dog. It lands by step five, locked at 100% confidence.
+
+Here's what changed. FGSM computes the gradient sign once and stops. This attack computes it, takes a small step, and does it again, forty times, correcting course as the loss landscape curves beneath it. Same photo, same target class, "toaster." Run FGSM's targeted variant at that same target and it never gets there, across its whole epsilon range. This one reaches it at the smallest budget I tested, five steps into forty available. This isn't a stronger bug or a different exploit. It's the same idea Goodfellow's team described in 2014, just not stopping after one step. There's a name for it too: PGD, Projected Gradient Descent, from a 2017 paper by Madry, Makelov, Schmidt, Tsipras, and Vladu. The core claim: don't trust a linear approximation of the loss all the way to the edge of your budget in one jump. Trust it locally, take a small step, recompute the gradient, and project back onto the budget every time a step might have carried you past it.
+
+If you've done real fuzzing or iterative red-teaming, this won't be a surprising result. Looping with feedback beats a single blind shot, and that's the entire reason fuzzers loop instead of guessing once. Same constraint as FGSM: white-box, gradient access required. This attack just costs more to run, forty forward and backward passes instead of one, so it's not what you reach for when you need a five-second smoke test. It's what you reach for when you need the real answer.
+
+### The idea, without the paper's notation
+
+FGSM's whole attack is one step: compute the gradient sign, scale by `epsilon`, done. That's optimal if you trust the linear approximation of the loss all the way out to the edge of your `epsilon` budget, but for anything beyond a tiny budget, that trust is misplaced. Loss landscapes curve. A straight line to the edge of the `L∞` ball is rarely the direction that actually maximizes (or minimizes, for targeted attacks) loss once you're partway there.
+
+PGD's fix: don't try to get there in one jump. Take a small step of size `alpha` (a fraction of `epsilon`, `epsilon / 10` by default here), recompute the gradient at the new point, take another step. Each individual step trusts the linear approximation only locally, where it's actually valid. After every step, project back onto the `epsilon`-ball around the original image:
+
+```
+x_adv = clip(x_adv + step, x_orig - epsilon, x_orig + epsilon)
+```
+
+That projection is the whole reason this is called *projected* gradient descent. Without it, forty accumulated small steps would wander arbitrarily far from the original image. With it, the attack can explore, curve, correct course, and still never exceed the budget you set.
+
+### What this looks like in code
+
+The loop, trimmed to the actual attack logic (full file linked below):
+
+```python
+for step in range(n_steps):
+    x_adv.requires_grad_(True)
+
+    x_norm = normalize(x_adv)
+    logits = model(x_norm.unsqueeze(0))
+    loss = F.cross_entropy(logits, torch.tensor([label]).to(DEVICE))
+
+    model.zero_grad()
+    loss.backward()
+
+    with torch.no_grad():
+        if targeted:
+            step_direction = -alpha * x_adv.grad.sign()
+        else:
+            step_direction = alpha * x_adv.grad.sign()
+
+        x_adv = x_adv + step_direction
+
+        # projection: clip back onto the epsilon-ball around x_orig
+        x_adv = torch.max(torch.min(x_adv, x_orig + epsilon), x_orig - epsilon)
+        x_adv = torch.clamp(x_adv, 0, 1)
+```
+
+Two details worth calling out because they're the parts people get wrong on a first implementation:
+
+- `x_adv.requires_grad_(True)` has to be set again at the start of *every* iteration. The previous iteration's `torch.no_grad()` block produces a plain tensor with `requires_grad=False`, so each step needs a fresh leaf tensor to differentiate against. Forget this and the loop silently stops computing real gradients after step one.
+- The sign flip for `targeted` is identical to FGSM's: add the gradient sign to increase loss (untargeted, push away from the true label), subtract it to decrease loss (targeted, pull toward the chosen label). The only new piece here is the projection line right after.
+
+### Running it
+
+```bash
+git clone https://github.com/BogiLoco/PGD
+cd PGD
+python3 -m venv venv && source venv/bin/activate
+pip install torch torchvision matplotlib pillow requests
+python pgd.py
+```
+
+No training, no dataset download: same pretrained ResNet18 as FGSM, same sample image on first run. It runs an untargeted attack, a targeted attack, then an epsilon sweep for both.
+
+An untargeted attack at `eps=8/255` takes the same `Samoyed` at 83.72% confidence straight to `lynx` at 100.00% confidence. Not a dip and recovery like FGSM's version of this attack. It walks straight there and locks in.
+
+Then the targeted attack, the one FGSM couldn't do. Same target, `"toaster"`, `eps=16/255`, watching the per-step log:
+
+```
+PGD targeted -> toaster (eps=16/255):
+  step   0: hen                       (5.2%)
+  step   5: toaster                   (100.0%) <- target reached!
+  step  10: toaster                   (100.0%) <- target reached!
+  step  15: toaster                   (100.0%) <- target reached!
+  step  20: toaster                   (99.7%) <- target reached!
+  step  25: toaster                   (99.9%) <- target reached!
+  step  30: toaster                   (100.0%) <- target reached!
+  step  35: toaster                   (100.0%) <- target reached!
+  step  39: toaster                   (100.0%) <- target reached!
+```
+
+Five steps to lock in. Here's what that looks like:
+
+![Side-by-side: a Samoyed classified correctly at 83.72%, the PGD perturbation visually amplified, and the same image after a targeted PGD attack, classified as toaster at 100.00% confidence](/images/pgd-targeted-toaster.jpg)
+
+<Callout type="note">
+Same caveat as FGSM: this runs against a `resnet18` instance in your own process, on an image you provide. Still a white-box attack, gradient access required, so it says nothing about a model you can only reach through an API.
+</Callout>
+
+Full epsilon sweeps for the same image, untargeted and targeted:
+
+```
+   epsilon | prediction                | confidence
+----------------------------------------------------
+    0.0000 | Samoyed                   |    83.72%
+    0.0039 | white wolf                |    98.75%  <- attack successful!
+    0.0078 | white wolf                |    96.52%  <- attack successful!
+    0.0157 | timber wolf               |    99.94%  <- attack successful!
+    0.0314 | lynx                      |   100.00%  <- attack successful!
+    0.0627 | lynx                      |   100.00%  <- attack successful!
+    0.1255 | Siamese cat               |   100.00%  <- attack successful!
+```
+
+```
+   epsilon | prediction                | confidence
+----------------------------------------------------
+    0.0000 | Samoyed                   |    83.72%
+    0.0039 | toaster                   |    84.53%  <- SUCCESS: model now sees the target!
+    0.0078 | toaster                   |   100.00%  <- SUCCESS: model now sees the target!
+    0.0157 | toaster                   |   100.00%  <- SUCCESS: model now sees the target!
+    0.0314 | toaster                   |   100.00%  <- SUCCESS: model now sees the target!
+    0.0627 | toaster                   |   100.00%  <- SUCCESS: model now sees the target!
+    0.1255 | toaster                   |   100.00%  <- SUCCESS: model now sees the target!
+```
+
+The last post didn't walk through FGSM's targeted sweep in detail, but it's in the repo and worth running yourself: FGSM never reaches `"toaster"` at all, not even at `eps=64/255`. This one reaches it at `eps=1/255`, the smallest nonzero budget tested, already at 84.53% confidence there. By `eps=2/255` it's saturated at 100%.
+
+## Before you go
+
+- **PGD is the bar FGSM claims get measured against.** "Robust to FGSM" tells you a model survives one linear step. It tells you nothing about whether it survives forty small, corrected ones. If a robustness claim doesn't specify PGD (or something stronger), assume it hasn't actually been tested against a real adversary.
+- **Targeted attacks are where the gap is most visible.** Run FGSM's targeted variant yourself and it doesn't reliably steer toward a specific class at any epsilon. This one did it at the smallest epsilon tested, in five of forty available steps. If your threat model includes an attacker aiming at a specific outcome rather than just breaking the model generally, this is the difference that actually matters.
+- **Confidence saturating at 100% is worse than FGSM's dip-and-recover pattern, not better.** A model that briefly drops to 20% confidence mid-attack is at least leaving a signal somewhere in the pipeline. A model that goes straight to 100% confidence in the wrong answer leaves nothing to catch.
+- **`alpha` and `n_steps` are your speed and precision knobs.** Smaller `alpha` with more `n_steps` gets closer to the true worst-case perturbation within your budget, at the cost of more forward and backward passes per attack. Forty steps at `alpha = epsilon / 10` is a reasonable default; tighten it if you have the compute and need a stronger bound.
+- **The full runnable code, both variants, epsilon sweep included, is at [github.com/BogiLoco/PGD](https://github.com/BogiLoco/PGD)** (MIT licensed; README covers setup and how to point it at your own image).
