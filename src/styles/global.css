@@ -29,4 +29,6 @@ body {
 
 .prose p {
   text-indent: 3ch;
+  text-align: justify;
+  hyphens: auto;
 }
