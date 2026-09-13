@@ -1,0 +1,122 @@
+---
+title: "Metric of the Week: G-Eval"
+description: "How G-Eval turns an LLM into a scorer for open-ended text: the form-filling paradigm, probability-weighted scores, and what the SummEval numbers show."
+publishDate: 2026-09-13
+draft: false
+tags: ["llm-eval", "benchmarking"]
+category: "testing-ai"
+sources:
+  - title: "Liu, Iter, Xu, Wang, Xu, Zhu: G-Eval, NLG Evaluation using GPT-4 with Better Human Alignment (arXiv:2303.16634)"
+    url: "https://arxiv.org/abs/2303.16634"
+  - title: "Wataoka, Takahashi, Ri: Self-Preference Bias in LLM-as-a-Judge (arXiv:2410.21819)"
+    url: "https://arxiv.org/abs/2410.21819"
+  - title: "Do LLM Evaluators Prefer Themselves for a Reason? (arXiv:2504.03846)"
+    url: "https://arxiv.org/abs/2504.03846"
+  - title: "DeepEval Documentation: G-Eval Metric"
+    url: "https://deepeval.com/docs/metrics-llm-evals"
+containsPoc: false
+---
+
+BLEU and ROUGE score a summary by counting overlapping n-grams against a reference. That's fine when there's basically one correct translation. It falls apart the moment there isn't a single correct answer, which is most of what you're actually shipping: chatbot replies, RAG answers, summaries that can be right in a hundred different phrasings. [Last week's post](/articles/llm-as-a-judge-all-eyez-on-llm) covered what happens once you hand the grading to an LLM: it works well enough to matter, and it fails in specific, measurable ways. G-Eval is the paper that made "ask GPT to rate it" into an actual method, with a name, an ablation study, and a trick worth stealing even if you never touch the library.
+
+Liu and colleagues at Microsoft published it in March 2023, and it made it into the EMNLP 2023 main conference program that same year. The headline finding: when GPT-4 scored summaries using G-Eval, its ratings lined up with what human reviewers actually thought far more closely than the old n-gram metrics ever managed. It wasn't a perfect match to human judgment (nothing automated is), but it was close enough to treat as a real stand-in for a human reader, which the older methods never got close to.
+
+### The form-filling paradigm
+
+G-Eval isn't "paste the text into a prompt and ask for a 1-5." It's three steps, and the paper's own name for the result is the *form-filling paradigm*: the model fills in a structured form instead of freewriting an opinion.
+
+**1. Task and criterion, stated explicitly.** Not "is this good" but "rate this summary for coherence: does it read as a well-structured, logically ordered piece of text, not a disjointed pile of facts." Every dimension you care about (coherence, consistency, fluency, relevance, whatever) gets its own pass with its own criterion, so you don't get a single blended score for free.
+
+**2. The model writes its own rubric.** Instead of you hand-authoring evaluation steps, you ask the model to generate them: "list the steps you'd take to evaluate coherence for this task." This is auto-generated chain-of-thought, and it's doing real work: the paper's ablation shows the CoT step measurably improves alignment with human scores over skipping straight to a number, on the summarization dimensions tested.
+
+**3. Score it, using the probabilities, not the token.** This is the part actually worth remembering.
+
+### Why the raw output token is thrown away
+
+Ask a model to output a single digit 1-5 and you get a lot of ties. Two summaries of visibly different quality both land on "4" because the model has to round to an integer, and a discrete 5-point scale just doesn't have the resolution to separate them. G-Eval's fix: don't read the sampled token, read the probability distribution the model assigned to *all* the candidate tokens before it sampled one, and take the probability-weighted average. Say the model's logprobs over the five possible scores work out to this distribution for one particular summary:
+
+| Score | P(score) |
+|---|---|
+| 3 | 0.05 |
+| 4 | 0.60 |
+| 5 | 0.35 |
+
+Greedy decoding gives you a flat 4. Weighting instead:
+
+```
+score = (3 × 0.05) + (4 × 0.60) + (5 × 0.35) = 4.30
+```
+
+Take a second summary where the model's distribution is almost torn between a 4 and a 5, say 53% sure it's a 4, 45% sure it's a 5, and barely anything left for a 3. That still rounds to a discrete rating of "4," same as the first summary. But weight it by those percentages instead, and it comes out at 4.43, closer to a 5 than the first summary's 4.30, even though a plain 1-to-5 rating would have called the two identical. That's the whole idea: multiply each possible score by how confident the model was in it, then add those up.
+
+```
+score = (P(1) × 1) + (P(2) × 2) + (P(3) × 3) + (P(4) × 4) + (P(5) × 5)
+```
+
+Which is just a spelled-out version of the general form:
+
+```
+G-Eval score = Σ (score_i × P(score_i))   for i in the valid score range
+```
+
+The paper found that this one change, scoring off the model's distribution instead of just its final, rounded answer, made the ratings line up better with what human reviewers actually thought. That's the part worth keeping even if you skip the library and build the rest yourself.
+
+### The library version
+
+[`deepeval`](https://deepeval.com/docs/metrics-llm-evals)'s `GEval` metric implements all three steps above (auto-generated CoT, probability-weighted scoring) behind a single criteria string:
+
+```python
+from deepeval.metrics import GEval
+from deepeval.test_case import LLMTestCase, SingleTurnParams
+
+coherence_metric = GEval(
+    name="Coherence",
+    criteria=(
+        "Coherence: the summary should be well-structured and well-organized, "
+        "not a disjointed pile of facts."
+    ),
+    evaluation_params=[
+        SingleTurnParams.INPUT,
+        SingleTurnParams.ACTUAL_OUTPUT,
+    ],
+    threshold=0.7,
+)
+
+test_case = LLMTestCase(
+    input=source_article,
+    actual_output=generated_summary,
+)
+
+coherence_metric.measure(test_case)
+print(coherence_metric.score)   # normalized to 0-1
+print(coherence_metric.reason)  # the judge's own justification
+
+assert coherence_metric.score >= coherence_metric.threshold, coherence_metric.reason
+```
+
+Pass `evaluation_steps` instead of `criteria` when you want to hand-write the rubric yourself rather than let the model generate one. Worth doing once you notice the auto-generated steps drifting from what you actually care about, which I've found happens more often on agent-trajectory evaluation than on plain text summarization.
+
+### Where G-Eval falls short
+
+G-Eval is a specific implementation of LLM-as-a-judge, so it inherits that family's full bias catalog: position bias, verbosity bias, authority bias, and the rest, covered in depth in the [previous post](/articles/llm-as-a-judge-all-eyez-on-llm). Three weaknesses are worth calling out specifically, because they come from how G-Eval itself works, not just from using an LLM as a judge in general.
+
+**Self-preference compounds when judge and generator share a model family.** Wataoka, Takahashi, and Ri found GPT-4 shows measurable self-preference bias as a judge, tracking with how familiar the text looks to it rather than literal self-recognition. A follow-up study found much of that preference is actually legitimate: stronger models often really do produce better output, so favoring it isn't automatically wrong. The part that stays harmful is narrower: it shows up specifically when the evaluator model errs as a generator, and gets worse, not better, in stronger models. Score GPT-4 output with a GPT-4 judge and you're running the exact setup where that failure mode is hardest to catch. The safest default is still a different model in the judge seat.
+
+**The rubric it grades against isn't stable across runs.** Step 2 generates the evaluation steps once per `GEval` instance: cache them, reuse them for every test case scored by that instance. But spin up a fresh instance (a new CI job, a new script run) and you get a new LLM call, possibly with a different rubric. If you need scores to stay comparable over a longer stretch of time (across CI runs, not just across test cases within one run), pin the generated steps yourself rather than trusting the auto-generated version to stay put between runs.
+
+**The probability-weighting trick needs an API that exposes it.** The whole reason G-Eval beats a bare "rate this 1-5" prompt is reading the logprobs over the candidate score tokens, not the sampled digit. Not every provider returns token-level logprobs, and some only do so for specific models. Without that access, you're back to greedy decoding and its resolution problem, or an empirical workaround: sample the same prompt N times at temperature > 0 and build the score distribution from the outputs instead of the logits. Noisier, but it approximates the same idea.
+
+### Cheat sheet: when to reach for it
+
+**Use:**
+
+- There's no single correct answer: summaries, RAG answers, chatbot turns. A reference-based metric like BLEU or ROUGE needs one "correct" text to compare against; when good answers can be phrased a hundred different ways, that comparison structurally can't work, no matter how you tune it.
+- The criteria don't reduce to counting tokens. Tone match, whether a refusal was actually polite, whether an explanation would land for a non-expert reader: these are judgment calls a human would make by reading the text, not something you can check by pattern-matching words.
+- You want fast, repeatable iteration on prompts or models. Every time you tweak a prompt or swap a model, you need to know if quality went up or down. G-Eval gives you a number for that instead of you personally reading a hundred transcripts and eyeballing it.
+- You can wire it into CI as a regression gate. Run it automatically on every prompt or model change, and a silent quality drop gets caught by the pipeline before it ships, instead of being caught by a user complaining later.
+
+**Skip:**
+
+- Ground truth is checkable. Extraction, classification, arithmetic, fact-checking against a fixed source: anywhere there's one exact correct answer, a plain equality check or a rule-based test tells you pass/fail directly. It's cheaper, fully deterministic, and if someone asks "how was this score produced," the answer is a one-line rule, not a language model's opinion.
+- You're running at high volume on a tight budget. Every G-Eval score costs a real API call to a language model. At scale, that adds up fast, so a smaller, cheaper judge model or a traditional metric as a first-pass filter is usually the better trade, saving G-Eval for the cases that actually need the judgment call.
+- It would be the only signal on anything high-stakes. G-Eval gives you a useful reading on quality, not a guarantee of correctness: it can be wrong, and it inherits the biases that come with any LLM-as-a-judge setup. Treat it as one input alongside human review, not the final word, when the stakes justify a second opinion.
