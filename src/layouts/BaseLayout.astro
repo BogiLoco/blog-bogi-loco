@@ -13,9 +13,6 @@ interface Props {
 
 const { title, description = site.tagline } = Astro.props;
 
-// Categories nav entry hidden for now (not enough posts yet) — the
-// /categories pages still exist, just unlinked. Re-add here when ready:
-// { href: '/categories', label: 'Categories' },
 const navLinks = [
   { href: '/', label: 'Home' },
   { href: '/articles', label: 'Articles' },
