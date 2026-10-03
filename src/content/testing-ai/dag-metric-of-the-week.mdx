@@ -1,0 +1,204 @@
+---
+title: "Metric of the Week: DAG"
+description: "DeepEval's DAGMetric turns an LLM judge into a decision tree: small yes/no nodes route to leaves where you, not the model, assign the score."
+publishDate: 2026-09-20
+draft: false
+tags: ["llm-eval", "benchmarking", "agents"]
+category: "testing-ai"
+sources:
+  - title: "DeepEval Documentation: DAG Metric"
+    url: "https://deepeval.com/docs/metrics-dag"
+  - title: "DeepEval Documentation: Conversational DAG"
+    url: "https://deepeval.com/docs/metrics-conversational-dag"
+  - title: "DeepEval Changelog 2026"
+    url: "https://deepeval.com/changelog/changelog-2026"
+  - title: "DeepEval Changelog 2025"
+    url: "https://deepeval.com/changelog/changelog-2025"
+  - title: "Confident AI: How I Built Deterministic LLM Evaluation Metrics for DeepEval"
+    url: "https://www.confident-ai.com/blog/how-i-built-deterministic-llm-evaluation-metrics-for-deepeval"
+  - title: "J. Ip: The Definitive LLM-as-a-Judge Guide for Scalable LLM Evaluation"
+    url: "https://medium.com/@jeffreyip54/the-definitive-llm-as-a-judge-guide-for-scalable-llm-evaluation-a4aad7b455b9"
+  - title: "Liu, Iter, Xu, Wang, Xu, Zhu: G-Eval, NLG Evaluation using GPT-4 with Better Human Alignment (arXiv:2303.16634)"
+    url: "https://arxiv.org/abs/2303.16634"
+  - title: "Zheng, Chiang, et al.: Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena (arXiv:2306.05685)"
+    url: "https://arxiv.org/abs/2306.05685"
+  - title: "Qin, et al.: InFoBench, Evaluating Instruction Following Ability in Large Language Models (arXiv:2401.03601)"
+    url: "https://arxiv.org/abs/2401.03601"
+  - title: "Lee, et al.: CheckEval, A Reliable LLM-as-a-Judge Framework for Evaluating Text Generation Using Checklists (arXiv:2403.18771)"
+    url: "https://arxiv.org/abs/2403.18771"
+  - title: "Viswanathan, et al.: Checklists Are Better Than Reward Models For Aligning Language Models (arXiv:2507.18624)"
+    url: "https://arxiv.org/abs/2507.18624"
+  - title: "Haldar, Hockenmaier: Rating Roulette, Self-Inconsistency in LLM-As-A-Judge Frameworks (arXiv:2510.27106)"
+    url: "https://arxiv.org/abs/2510.27106"
+containsPoc: false
+---
+
+import Callout from '../../components/Callout.astro';
+
+[Recently](/articles/g-eval-metric-of-the-week) we covered the trick behind G-Eval: have the model expand your criteria into its own rubric, then grade against it, reading the probabilities instead of the sampled token, for a number that correlates with human judgment far better than BLEU ever did. It's still one model producing one score off one holistic criterion, so when that score comes back low, you get a score and a paragraph of free-text reasoning, not a breakdown you can point at. Missing section? Wrong order? Hallucinated fact? Finding out which one actually failed usually means reading the transcript yourself, which defeats the point of automating the grading in the first place.
+
+DAGMetric, DeepEval's graph-based alternative to G-Eval, fixes that by not asking one big question. It asks several small ones, wires them into a graph, and lets you decide in advance how many points each path through that graph is worth. The model still makes every individual call. What's fixed is the structure around those calls: which question gets asked, in what order, and what a given answer is worth.
+
+### What's actually fixed, and what isn't
+
+DeepEval calls this "deterministic" evaluation, which oversells it a little. Three things are fixed by you, at graph-construction time, and never touched by the model:
+
+- **The shape of the graph.** Which questions exist, and in what order.
+- **The set of valid answers at each judgement node.** A binary node can only say true or false; a non-binary node can only pick one of your named labels.
+- **The score attached to each path.** You write `score=4` on a leaf; the model never picks that number and can't talk itself into a different one. The one exception is a path that ends in a `GEval` leaf, where the model scores again.
+
+What the model still controls is the evidence each `TaskNode` extracts and the verdict at each judgement node, and both can change between runs, same as any other LLM-as-a-judge call. `TaskNode` output is free text with no list of allowed answers, so if the heading-extraction step quietly drops "Conclusion," the gate below it sees bad evidence and makes a locally correct decision on a false premise. The "noise quarantined into small, auditable decisions" claim holds for verdicts; it doesn't extend to extraction, and that's worth knowing before you trust a gate you haven't separately checked. DAGMetric doesn't remove judge noise; it quarantines most of it inside small, individually auditable decisions instead of one big one. That's a real improvement, it's just not the same claim as "deterministic."
+
+### The research it lines up with
+
+Nobody wrote a paper called "DAG metric," and DeepEval's own changelog doesn't credit any of the research below as an influence. The timing actually rules out influence in one direction: per Confident AI's own blog, the base `DAGMetric` already existed by February 6, 2025, months before RLCF (July 2025) and Rating Roulette (October 2025) were even published, so any resemblance to those two is convergent, not borrowed. What shipped in September 2025, per DeepEval's 2025 changelog, is `ConversationalDAGMetric`, a separate multi-turn wrapper around the same node types, not the base API this post covers. G-Eval, InFoBench, and CheckEval are the opposite case: all three predate `DAGMetric`, G-Eval by about two years, InFoBench by about thirteen months, and CheckEval's original paper by about eleven, so DeepEval could have drawn on them chronologically, even though it credits none of them. (The 0.45 figure cited below for CheckEval comes from a 2025 revision of that paper, not the March 2024 original.) So treat what follows as research the design lines up with, not a family tree DeepEval itself draws.
+
+The first is G-Eval itself: chain-of-thought plus form-filling, the idea that a model fills in a structured rubric instead of free-writing an opinion. The second is a line of work on decomposing criteria into checklists. InFoBench breaks a complex instruction into simple yes/no sub-questions, an average of 4.5 per instruction across its 500-instruction set, and finds that more reliable than asking for one holistic judgment. CheckEval converts criteria into boolean checklist items and reports a 0.45 jump in inter-judge agreement across twelve different judge models. RLCF (Reinforcement Learning from Checklist Feedback) goes further and uses checklists as a training signal: each item is phrased as a yes/no question, but scored 0-100 by a judge, averaged over 25 samples, or checked by a generated verifier program where the requirement is precise enough to admit one. That last part is the same advice this post gives later about pulling anything checkable out of the graph and into code, just applied one layer down, at training time instead of eval time. Averaging 25 noisy samples per item is itself an admission that one judge call on one checklist item isn't trustworthy alone, and while the paper does call checklist scores stable and interpretable, that rests on qualitative examples: as a *judge*, checklists score worse than specialized reward models on RewardBench; they win specifically as a *training signal*, producing policies that beat reward-model training on held-out instruction-following benchmarks. The third thread is the growing pile of evidence that a single LLM judge is inconsistent with itself between runs on the exact same input, which is the problem [the post from two weeks back](/articles/llm-as-a-judge-all-eyez-on-llm) covered in depth.
+
+What DAG adds on top of a flat checklist is threefold. Some questions never get asked if an earlier answer already settled the outcome. Nodes can share evidence instead of each re-deriving it from the raw text. And scoring is path-to-leaf instead of aggregated: CheckEval and RLCF both roll a checklist up into a fraction of "yes" answers or a weighted average, which can't express "missing X means zero, full stop, regardless of how well everything else scored." A DAG path can, because the score lives on the path, not on a sum. That's a bigger practical difference than the call savings mentioned below. None of this is a new empirical result about judge accuracy, though: DAG inherits whatever noise reduction decomposition buys you from the research above, the conditional structure itself adds none on top of that, and a misjudged gate high in the graph can amplify a single bad call instead of averaging it away.
+
+### The three node types
+
+| Node | Role | Produces |
+|---|---|---|
+| `TaskNode` | Turns raw input into evidence, e.g. extracting headings or claims | Text passed to its children, no score |
+| `BinaryJudgementNode` | One yes/no question | `True` / `False` |
+| `NonBinaryJudgementNode` | Picks one of your named labels | One of your labels |
+
+Every judgement node's verdict carries exactly one of two things: a score (an integer, 0-10) or a `then`. A score ends the path and becomes the result, normalized as `score / 10`. A `then` pointing at another node keeps the graph going; a `then` pointing at a `GEval` or any other `BaseMetric` also ends the path, and that metric's own score and reason become the result instead. Either way there's no averaging across nodes: one path, one outcome, one number. The metric passes when that number is `>= threshold` (0.5 by default).
+
+`DeepAcyclicGraph` validates the graph when you build it, not an hour into a CI run: it rejects cycles, a binary node without exactly one `True` and one `False` verdict, duplicate labels on a non-binary node, and any verdict carrying both `score` and `then` (or neither). Forget the `False` branch on a binary node and you get an error at construction time: I built one and confirmed it, a `ValueError` reading "must have exactly 2 children" (a wording holdover from the old constructor-based API that the current `add_verdict` method hasn't caught up to). That's the failure mode you actually want.
+
+### A graph that gates itself
+
+Take a meeting-summary checker: the summary must have Intro, Body, and Conclusion headings, in that order. One `TaskNode` extracts the headings, a `BinaryJudgementNode` checks all three are present, and only if that passes does a `NonBinaryJudgementNode` check their order.
+
+```python
+from deepeval.metrics import DAGMetric
+from deepeval.metrics.dag import (
+    DeepAcyclicGraph, TaskNode, BinaryJudgementNode, NonBinaryJudgementNode,
+)
+from deepeval.test_case import LLMTestCase, SingleTurnParams
+
+extract = TaskNode(
+    instructions="Extract all headings in `actual_output`.",
+    evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT],
+    output_label="Summary headings",
+)
+present = BinaryJudgementNode(
+    criteria="Do the summary headings contain all three: 'Intro', 'Body', and 'Conclusion'?"
+)
+order = NonBinaryJudgementNode(
+    criteria="Classify the ordering of the summary headings relative to 'Intro' => 'Body' => 'Conclusion'."
+)
+
+extract.add_node(present)
+extract.add_node(order)                 # order also reads the extracted headings
+
+present.add_verdict(verdict=False, score=0)      # gate: missing a heading ends it here
+present.add_verdict(verdict=True, then=order)
+
+order.add_verdict(verdict="Correct order", score=10)
+order.add_verdict(verdict="Two headings swapped", score=4)
+order.add_verdict(verdict="All headings out of order", score=2)
+
+dag = DeepAcyclicGraph(root_nodes=[extract])
+metric = DAGMetric(name="Format Correctness", dag=dag, threshold=0.5, verbose_mode=True)
+
+test_case = LLMTestCase(
+    input="<meeting transcript>",
+    actual_output="Intro:\n...\n\nBody:\n...\n\nConclusion:\n...",
+)
+metric.measure(test_case)
+print(metric.score, metric.success)  # 1.0 True, for a summary with all three headings in order
+```
+
+Note that "Two headings swapped" (4) and "All headings out of order" (2) both fail against the default `threshold=0.5` either way, so splitting them only matters if you're tracking score trends over time, not for the pass/fail call. That's a design decision, not a side effect: you pick how many distinct scores a path is worth when you write the leaves, same as you pick the threshold.
+
+`extract.add_node(...)` is a data edge: the node you pass in receives `extract`'s output. `add_verdict(..., then=...)` is a control edge: it decides which node runs next. Skip `present.add_verdict(verdict=True, then=order)` and the graph won't build at all, a `BinaryJudgementNode` needs both a `True` and a `False` verdict before `DeepAcyclicGraph` will accept it. Skip `extract.add_node(order)`, though, and it builds just fine, `order` still runs, but with no heading evidence whatsoever: only nodes reached through a `TaskNode`'s own `add_node` calls get that `TaskNode`'s output folded into their prompt, and `order` has no `evaluation_params` of its own to fall back on. I confirmed this too: build the graph that way and inspect the prompt `order` actually receives, and the "Summary headings" section isn't just wrong, it's missing entirely, just the bare criteria followed straight by the JSON-format instructions. The graph runs, the metric returns a number, and the number is based on nothing. That's the mistake that actually bites, because nothing errors.
+
+For one-off runs like the snippet above, `metric.measure()` is fine. Point it at a real eval set in CI and reach for `deepeval`'s `evaluate()` instead: `measure()` skips the reporting, caching, and concurrency that `evaluate()` gives you across a batch of test cases.
+
+The gate also saves calls, not just noise, though the real counts run higher than you'd guess from counting nodes alone, because `include_reason=True` by default adds one more call at whichever leaf you land on. A summary missing a heading stops after `extract -> present`, plus the reason call: three calls total. A summary that keeps all three headings, correct order or not, has to continue to `order`: four calls either way, the order check doesn't get cheaper just because the answer turns out wrong. The saving is the gate removing one node's call, plus its reason call, for every case it rejects outright. That's a real cost difference at eval-set scale.
+
+<Callout type="note">
+As of DeepEval 4.2 (base release August 2026, with patches running into September), the syntax above is current, but it's recent. The top-down construction API (`add_node` / `add_verdict`) landed in v4.1.5 in late July; separately, v3.9.9 in April refreshed DeepEval's own docs and examples to use `SingleTurnParams` instead of the older `LLMTestCaseParams` naming. If a DAG snippet you find elsewhere passes `children` into constructors or uses `LLMTestCaseParams`, it predates those changes. Target at least v4.1.8: per DeepEval's own 2026 changelog, before that release "nodes with multiple mutually exclusive verdict edges from the same judgement would never run," and that version also started rejecting a root node that's reachable from another root.
+</Callout>
+
+### Gate the cheap stuff, G-Eval the subjective stuff
+
+A leaf doesn't have to be a number. It can be a `GEval` instance, which means you can put hard, binary policy checks at the top of the graph and leave genuinely subjective judgment at the bottom:
+
+```python
+from deepeval.metrics import GEval, DAGMetric
+from deepeval.metrics.dag import BinaryJudgementNode, DeepAcyclicGraph
+from deepeval.test_case import SingleTurnParams
+
+policy = BinaryJudgementNode(
+    # the purchase date has to actually be in context for this question to be answerable
+    criteria="Given the purchase date in context, does the response promise a refund outside the stated 30-day policy?",
+    evaluation_params=[SingleTurnParams.INPUT, SingleTurnParams.ACTUAL_OUTPUT, SingleTurnParams.CONTEXT],
+)
+tone = GEval(
+    name="Helpfulness & tone",
+    evaluation_steps=[
+        "Check whether the response directly addresses what the customer asked.",
+        "Check whether the tone is clear and polite, without being curt or over-apologetic.",
+    ],
+    evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT],
+)
+policy.add_verdict(verdict=True, score=0)     # policy violation: hard zero, no second opinion
+policy.add_verdict(verdict=False, then=tone)  # otherwise, hand off to the subjective judge
+
+support_metric = DAGMetric(name="Support Quality", dag=DeepAcyclicGraph(root_nodes=[policy]))
+```
+
+Two things about that `tone` leaf specifically. First, [G-Eval's big trick](/articles/g-eval-metric-of-the-week) is reading the judge model's token probabilities instead of its sampled answer, and that only works with a judge that actually exposes logprobs; several `gpt-5`-family models (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5.1`, per DeepEval's own model registry at the time of writing) don't, so a leaf scored by one of those quietly falls back to the raw sampled score and loses exactly the benefit that post was about. Pin the judge model explicitly on any metric you're tracking over time rather than relying on whatever DeepEval currently defaults to, since that default is a moving target across library versions and a quiet model swap is a quiet rubric change. Second, `evaluation_steps` is passed explicitly here instead of `criteria` on purpose: without it, G-Eval has to generate its own steps first, which is an extra model call and one more thing that can differ between runs.
+
+This is the pattern worth stealing even if the rest of your rubric stays flat: anything you can state as "if X, the answer is wrong, full stop" belongs in a gate at the top, and only the cases that survive the gate get the expensive, fuzzier judgment call.
+
+### DAG vs. G-Eval
+
+| | DAGMetric | GEval |
+|---|---|---|
+| Rubric structure | Explicit tasks, branches, named outcomes | One holistic criterion |
+| Who sets the score | You, at each leaf (unless the leaf is a `GEval`) | The model |
+| Best for | Conditional rules, gates, known-shape outputs | Subjective quality that's hard to enumerate |
+| Setup cost | Higher: you design and wire the graph | Lower: one criteria string |
+| Debuggability | High: `verbose_mode` shows which node fired | Low: one score, one reason string |
+| Model calls | One per node on the active path, plus a reason call | One metric workflow (plus a step-generation call without `evaluation_steps`) |
+
+Rule of thumb: if you can write the rubric as "if X is missing, it's a 0, otherwise judge the quality," reach for DAG. If the honest rubric is "does this read well," G-Eval is the cheaper, correctly-sized tool. A lot of real rubrics are both, which is exactly what the gate-then-GEval pattern above is for.
+
+### Cheat sheet: when to reach for it
+
+**Use:**
+
+- The rubric has real conditionals: missing-field gates, policy checks, known failure modes that should zero out the score before anything else gets evaluated.
+- Structure and ordering are part of what you're grading: required sections, a sequence of steps, a specific response shape.
+- You're grading agent behavior and the judgment call is genuinely "was this the right tool for the situation," not just "was it the expected one." If you have `expected_tools` for the test case, check tool selection in code (or with a deterministic metric like DeepEval's own `ToolPermissionMetric`, which checks calls against an allowlist with no judge model involved) instead of asking an LLM to compare names. Reach for a `BinaryJudgementNode` against `SingleTurnParams.TOOLS_CALLED` only when picking "the right tool" is itself ambiguous, then let a downstream node judge whether it was called well.
+- You need to know *why* a score is low, not just that it is. A failing leaf in `verbose_mode` points at one specific node.
+
+**Skip:**
+
+- The rule is checkable in code: regex, a JSON schema check, a length comparison. An assertion is free, exact, and doesn't depend on a model's mood. DeepEval's own guides have used "does the response have ≤ 4 sentences?" as a worked `BinaryJudgementNode` example to illustrate the mechanics (not on the DAG reference page itself); in production that specific check belongs in Python, not in a prompt.
+- The real rubric is one subjective dimension. Building a graph for "is this well-written" is overhead with nothing to show for it; that's G-Eval's job.
+- Your judge model is weak at following a forced-choice schema. A non-binary node is schema-constrained to its defined labels, so an answer outside that set either fails the metric outright or forces a structured-output retry; neither outcome makes the graph more reliable, it just means a weaker model burns more of your budget getting back in line.
+
+### Three ways it fails quietly
+
+These follow from how the graph executes, not from any particular bug.
+
+**A bad call high in the graph takes everything below it with it, whether that call was a verdict or an extraction.** If your top gate misreads one summary and routes it down the wrong branch, nothing downstream gets a chance to correct it, and a `TaskNode` that drops a heading is exactly as damaging as a judgement node that misreads one: either way, everything below it is reasoning from bad premises. Calibrate the nodes closest to the root hardest, and when validating against a human-labeled set, check agreement node by node, not just on the final score: a gate that's wrong 10% of the time can hide inside a final-score number that still looks fine.
+
+**Discrete paths are steadier on clear cases and jumpier on close ones.** Most inputs aren't ambiguous: the heading is there or it isn't, and the gate gives the same answer every run. But take a summary whose last heading reads "Conclusions" instead of "Conclusion." Does that count? The judge might say yes on one run and no on the next, and because the gate has no middle ground, the same summary scores 1.0 one time and 0.0 the next, where a single G-Eval prompt facing the same ambiguity would more likely wobble between 0.6 and 0.7. That's another reason to calibrate the nodes nearest the root hardest: that's where a close call costs you the most. (One caution on the research above: it shows different judges agree more when questions are narrower, not that one judge repeats itself run to run, so it doesn't back a repeatability claim either way.)
+
+**Resolution is bounded by how many leaves you wrote, on paths that end in a fixed score.** A handful of leaves means a handful of possible scores, not a continuous scale. (A path that ends in a `GEval` leaf instead inherits that metric's own resolution, not this limit.) If you need finer-grained tracking over time on the fixed-score paths, average across a bigger eval set rather than expecting more precision out of one test case.
+
+## Before you go
+
+- **DAGMetric doesn't remove judge noise, it quarantines most of it.** The graph shape, the allowed answers, and the points per leaf (unless that leaf is a `GEval`, which scores itself) are fixed by you. What a `TaskNode` extracts and what a judgement node decides can still vary between runs, exactly like any other LLM-as-a-judge call.
+- **Gates save calls compared to running the whole graph, not compared to G-Eval.** A node that short-circuits the graph on a hard failure means downstream nodes never run, which is cheaper at eval-set scale than not gating at all. But node for node, a multi-step DAG still costs more model calls than one G-Eval pass; gating just keeps that overhead from being worse than it has to be.
+- **It composes with G-Eval, it doesn't replace it.** Put hard conditionals in gates at the top of the graph, and let a `GEval` leaf handle whatever's left that's genuinely subjective, with fixed `evaluation_steps` and a judge model that actually exposes logprobs.
+- **If the rubric is checkable in code, it doesn't belong in the graph.** Every node you build is a model call you're paying for and a model call that can be wrong; don't spend one on something `len()`, a regex, or a deterministic metric already does for free.
+- **Validate node by node, not just the final score.** A miscalibrated gate, or a `TaskNode` quietly dropping evidence, can hide behind a final-score agreement number that happens to look fine on your sample. Check the path, not just the destination.
